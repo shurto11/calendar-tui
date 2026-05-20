@@ -13,8 +13,22 @@ pub enum AppMode {
     AddTask { title: String },
     AddTaskSelectList { title: String, selected: usize },
     AddTaskNewList { title: String, new_list: String },
+    SelectItemDelete { selected: usize },
+    SelectItemEdit { selected: usize },
+    SelectTaskToggle { selected: usize },
     DeleteConfirm { event_index: usize },
     DeleteTaskConfirm { task_index: usize },
+    EditEvent { event_index: usize, title: String },
+    EditTask { task_index: usize, title: String },
+    EditTaskSelectList { task_index: usize, title: String, selected: usize },
+    TaskList { selected: usize },
+    TaskListAdd { title: String },
+    TaskListAddSelectList { title: String, selected_list: usize },
+    TaskListAddDate { title: String, list_id: String, date_input: String },
+    TaskListEdit { task_index: usize, title: String },
+    TaskListEditSelectList { task_index: usize, title: String, selected_list: usize },
+    TaskListEditDate { task_index: usize, title: String, list_id: String, date_input: String },
+    TaskListDeleteConfirm { task_index: usize },
 }
 
 pub struct App {
@@ -22,6 +36,7 @@ pub struct App {
     pub selected_date: NaiveDate,
     pub events: HashMap<NaiveDate, Vec<Event>>,
     pub tasks: HashMap<NaiveDate, Vec<Task>>,
+    pub all_tasks: Vec<Task>,
     pub mode: AppMode,
     pub status_message: Option<String>,
     pub task_lists: Vec<TaskList>,
@@ -46,6 +61,7 @@ impl App {
             selected_date: today,
             events: HashMap::new(),
             tasks: HashMap::new(),
+            all_tasks: Vec::new(),
             mode: AppMode::Normal,
             status_message: None,
             task_lists,
@@ -183,11 +199,49 @@ impl App {
             AppMode::AddTaskNewList { title, new_list } => {
                 self.handle_new_list(key, title, new_list).await
             }
+            AppMode::SelectItemDelete { selected } => {
+                self.handle_select_item_delete(key, selected).await
+            }
+            AppMode::SelectItemEdit { selected } => {
+                self.handle_select_item_edit(key, selected).await
+            }
+            AppMode::SelectTaskToggle { selected } => {
+                self.handle_select_task_toggle(key, selected).await
+            }
             AppMode::DeleteConfirm { event_index } => {
                 self.handle_delete_confirm(key, event_index).await
             }
             AppMode::DeleteTaskConfirm { task_index } => {
                 self.handle_delete_task_confirm(key, task_index).await
+            }
+            AppMode::EditEvent { event_index, title } => {
+                self.handle_edit_event(key, event_index, title).await
+            }
+            AppMode::EditTask { task_index, title } => {
+                self.handle_edit_task(key, task_index, title).await
+            }
+            AppMode::EditTaskSelectList { task_index, title, selected } => {
+                self.handle_edit_task_select_list(key, task_index, title, selected).await
+            }
+            AppMode::TaskList { selected } => self.handle_task_list(key, selected).await,
+            AppMode::TaskListAdd { title } => self.handle_task_list_add(key, title).await,
+            AppMode::TaskListAddSelectList { title, selected_list } => {
+                self.handle_task_list_add_select_list(key, title, selected_list).await
+            }
+            AppMode::TaskListAddDate { title, list_id, date_input } => {
+                self.handle_task_list_add_date(key, title, list_id, date_input).await
+            }
+            AppMode::TaskListEdit { task_index, title } => {
+                self.handle_task_list_edit(key, task_index, title).await
+            }
+            AppMode::TaskListEditSelectList { task_index, title, selected_list } => {
+                self.handle_task_list_edit_select_list(key, task_index, title, selected_list).await
+            }
+            AppMode::TaskListEditDate { task_index, title, list_id, date_input } => {
+                self.handle_task_list_edit_date(key, task_index, title, list_id, date_input).await
+            }
+            AppMode::TaskListDeleteConfirm { task_index } => {
+                self.handle_task_list_delete_confirm(key, task_index).await
             }
         }
     }
@@ -203,60 +257,39 @@ impl App {
             KeyCode::Char('[') => self.change_month(-1).await?,
             KeyCode::Char(']') => self.change_month(1).await?,
             KeyCode::Char('a') => {
-                self.mode = AppMode::AddEvent {
-                    title: String::new(),
-                }
+                self.mode = AppMode::AddEvent { title: String::new() }
+            }
+            KeyCode::Char('n') => {
+                self.mode = AppMode::AddTask { title: String::new() }
             }
             KeyCode::Char('t') => {
-                self.mode = AppMode::AddTask {
-                    title: String::new(),
-                }
-            }
-            KeyCode::Char('c') => {
-                let tasks = self.tasks.get(&self.selected_date).map(Vec::as_slice).unwrap_or(&[]);
-                if let Some(task) = tasks.first() {
-                    let task = task.clone();
-                    match self.tasks_client.toggle_task(&task).await {
-                        Ok(updated) => {
-                            if let Some(tasks) = self.tasks.get_mut(&self.selected_date) {
-                                if let Some(t) = tasks.first_mut() {
-                                    *t = updated;
-                                }
-                            }
-                            self.status_message = Some("タスクの完了状態を切り替えました".to_string());
-                        }
-                        Err(e) => {
-                            self.status_message = Some(format!("エラー: {}", e));
-                        }
-                    }
-                } else {
-                    self.status_message = Some("この日にタスクはありません".to_string());
-                }
-            }
-            KeyCode::Char('d') => {
-                let idx = self
-                    .selected_events()
-                    .iter()
-                    .enumerate()
-                    .find(|(_, e)| !e.is_holiday)
-                    .map(|(i, _)| i);
-                match idx {
-                    Some(i) => self.mode = AppMode::DeleteConfirm { event_index: i },
-                    None => {
-                        self.status_message = Some(if self.selected_events().is_empty() {
-                            "この日に予定はありません".to_string()
-                        } else {
-                            "削除できる予定がありません".to_string()
-                        })
-                    }
-                }
-            }
-            KeyCode::Char('D') => {
                 if self.selected_tasks().is_empty() {
                     self.status_message = Some("この日にタスクはありません".to_string());
                 } else {
-                    self.mode = AppMode::DeleteTaskConfirm { task_index: 0 };
+                    self.mode = AppMode::SelectTaskToggle { selected: 0 };
                 }
+            }
+            KeyCode::Char('d') => {
+                let n_events = self.selected_events().iter().filter(|e| !e.is_holiday).count();
+                let n_tasks = self.selected_tasks().len();
+                if n_events + n_tasks == 0 {
+                    self.status_message = Some("この日に削除できる項目はありません".to_string());
+                } else {
+                    self.mode = AppMode::SelectItemDelete { selected: 0 };
+                }
+            }
+            KeyCode::Char('e') => {
+                let n_events = self.selected_events().iter().filter(|e| !e.is_holiday).count();
+                let n_tasks = self.selected_tasks().len();
+                if n_events + n_tasks == 0 {
+                    self.status_message = Some("この日に編集できる項目はありません".to_string());
+                } else {
+                    self.mode = AppMode::SelectItemEdit { selected: 0 };
+                }
+            }
+            KeyCode::Char('T') => {
+                let _ = self.load_all_tasks().await;
+                self.mode = AppMode::TaskList { selected: 0 };
             }
             _ => {}
         }
@@ -415,10 +448,260 @@ impl App {
         Ok(false)
     }
 
+    async fn handle_select_item_delete(&mut self, key: KeyEvent, selected: usize) -> Result<bool> {
+        let non_holiday_indices: Vec<usize> = self.selected_events().iter()
+            .enumerate()
+            .filter(|(_, e)| !e.is_holiday)
+            .map(|(i, _)| i)
+            .collect();
+        let n_events = non_holiday_indices.len();
+        let n_tasks = self.selected_tasks().len();
+        let total = n_events + n_tasks;
+
+        match key.code {
+            KeyCode::Esc => self.mode = AppMode::Normal,
+            KeyCode::Char('j') | KeyCode::Down => {
+                let new_sel = (selected + 1).min(total.saturating_sub(1));
+                self.mode = AppMode::SelectItemDelete { selected: new_sel };
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let new_sel = selected.saturating_sub(1);
+                self.mode = AppMode::SelectItemDelete { selected: new_sel };
+            }
+            KeyCode::Enter => {
+                if selected < n_events {
+                    self.mode = AppMode::DeleteConfirm { event_index: non_holiday_indices[selected] };
+                } else {
+                    self.mode = AppMode::DeleteTaskConfirm { task_index: selected - n_events };
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_select_item_edit(&mut self, key: KeyEvent, selected: usize) -> Result<bool> {
+        let non_holiday_indices: Vec<usize> = self.selected_events().iter()
+            .enumerate()
+            .filter(|(_, e)| !e.is_holiday)
+            .map(|(i, _)| i)
+            .collect();
+        let n_events = non_holiday_indices.len();
+        let n_tasks = self.selected_tasks().len();
+        let total = n_events + n_tasks;
+
+        match key.code {
+            KeyCode::Esc => self.mode = AppMode::Normal,
+            KeyCode::Char('j') | KeyCode::Down => {
+                let new_sel = (selected + 1).min(total.saturating_sub(1));
+                self.mode = AppMode::SelectItemEdit { selected: new_sel };
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let new_sel = selected.saturating_sub(1);
+                self.mode = AppMode::SelectItemEdit { selected: new_sel };
+            }
+            KeyCode::Enter => {
+                if selected < n_events {
+                    let event_idx = non_holiday_indices[selected];
+                    let title = self.selected_events()[event_idx].title.clone();
+                    self.mode = AppMode::EditEvent { event_index: event_idx, title };
+                } else {
+                    let task_idx = selected - n_events;
+                    let title = self.selected_tasks()[task_idx].title.clone();
+                    self.mode = AppMode::EditTask { task_index: task_idx, title };
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_select_task_toggle(&mut self, key: KeyEvent, selected: usize) -> Result<bool> {
+        let n_tasks = self.selected_tasks().len();
+
+        match key.code {
+            KeyCode::Esc => self.mode = AppMode::Normal,
+            KeyCode::Char('j') | KeyCode::Down => {
+                let new_sel = (selected + 1).min(n_tasks.saturating_sub(1));
+                self.mode = AppMode::SelectTaskToggle { selected: new_sel };
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let new_sel = selected.saturating_sub(1);
+                self.mode = AppMode::SelectTaskToggle { selected: new_sel };
+            }
+            KeyCode::Enter => {
+                let tasks = self.tasks.get(&self.selected_date).cloned().unwrap_or_default();
+                if let Some(task) = tasks.get(selected) {
+                    let task = task.clone();
+                    match self.tasks_client.toggle_task(&task).await {
+                        Ok(updated) => {
+                            if let Some(day_tasks) = self.tasks.get_mut(&self.selected_date) {
+                                if let Some(t) = day_tasks.get_mut(selected) {
+                                    *t = updated;
+                                }
+                            }
+                            self.status_message = Some("タスクの完了状態を切り替えました".to_string());
+                        }
+                        Err(e) => {
+                            self.status_message = Some(format!("エラー: {}", e));
+                        }
+                    }
+                }
+                self.mode = AppMode::Normal;
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_edit_event(
+        &mut self,
+        key: KeyEvent,
+        event_index: usize,
+        mut title: String,
+    ) -> Result<bool> {
+        match key.code {
+            KeyCode::Esc => self.mode = AppMode::Normal,
+            KeyCode::Enter => {
+                let trimmed = title.trim().to_string();
+                if !trimmed.is_empty() {
+                    let events = self.events.get(&self.selected_date).cloned().unwrap_or_default();
+                    if let Some(event) = events.get(event_index) {
+                        let event_id = event.id.clone();
+                        match self.calendar_client.update_event(&event_id, &trimmed).await {
+                            Ok(()) => {
+                                if let Some(evs) = self.events.get_mut(&self.selected_date) {
+                                    if let Some(e) = evs.get_mut(event_index) {
+                                        e.title = trimmed;
+                                    }
+                                }
+                                self.status_message = Some("予定を更新しました".to_string());
+                            }
+                            Err(e) => {
+                                self.status_message = Some(format!("エラー: {}", e));
+                            }
+                        }
+                    }
+                }
+                self.mode = AppMode::Normal;
+            }
+            KeyCode::Char(c) => {
+                title.push(c);
+                self.mode = AppMode::EditEvent { event_index, title };
+            }
+            KeyCode::Backspace => {
+                title.pop();
+                self.mode = AppMode::EditEvent { event_index, title };
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_edit_task(
+        &mut self,
+        key: KeyEvent,
+        task_index: usize,
+        mut title: String,
+    ) -> Result<bool> {
+        match key.code {
+            KeyCode::Esc => self.mode = AppMode::Normal,
+            KeyCode::Enter => {
+                if !title.trim().is_empty() {
+                    let current_list_idx = self
+                        .selected_tasks()
+                        .get(task_index)
+                        .and_then(|t| self.task_lists.iter().position(|l| l.id == t.list_id))
+                        .unwrap_or(0);
+                    self.mode = AppMode::EditTaskSelectList {
+                        task_index,
+                        title,
+                        selected: current_list_idx,
+                    };
+                } else {
+                    self.mode = AppMode::Normal;
+                }
+            }
+            KeyCode::Char(c) => {
+                title.push(c);
+                self.mode = AppMode::EditTask { task_index, title };
+            }
+            KeyCode::Backspace => {
+                title.pop();
+                self.mode = AppMode::EditTask { task_index, title };
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_edit_task_select_list(
+        &mut self,
+        key: KeyEvent,
+        task_index: usize,
+        title: String,
+        selected: usize,
+    ) -> Result<bool> {
+        let total = self.task_lists.len();
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = AppMode::EditTask { task_index, title };
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                let new_sel = (selected + 1).min(total.saturating_sub(1));
+                self.mode = AppMode::EditTaskSelectList { task_index, title, selected: new_sel };
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let new_sel = selected.saturating_sub(1);
+                self.mode = AppMode::EditTaskSelectList { task_index, title, selected: new_sel };
+            }
+            KeyCode::Enter => {
+                let tasks = self.tasks.get(&self.selected_date).cloned().unwrap_or_default();
+                if let Some(task) = tasks.get(task_index) {
+                    let task = task.clone();
+                    let new_list_id = self.task_lists[selected].id.clone();
+                    let new_title = title.trim().to_string();
+
+                    if task.list_id == new_list_id {
+                        match self.tasks_client.update_task_title(&task.list_id, &task.id, &new_title).await {
+                            Ok(()) => {
+                                if let Some(day_tasks) = self.tasks.get_mut(&self.selected_date) {
+                                    if let Some(t) = day_tasks.get_mut(task_index) {
+                                        t.title = new_title;
+                                    }
+                                }
+                                self.status_message = Some("タスクを更新しました".to_string());
+                            }
+                            Err(e) => {
+                                self.status_message = Some(format!("エラー: {}", e));
+                            }
+                        }
+                    } else {
+                        match self.tasks_client.move_task_to_list(&task, &new_list_id, &new_title).await {
+                            Ok(new_task) => {
+                                if let Some(day_tasks) = self.tasks.get_mut(&self.selected_date) {
+                                    day_tasks.remove(task_index);
+                                    day_tasks.push(new_task);
+                                }
+                                self.status_message = Some("タスクを更新しました".to_string());
+                            }
+                            Err(e) => {
+                                self.status_message = Some(format!("エラー: {}", e));
+                            }
+                        }
+                    }
+                }
+                self.mode = AppMode::Normal;
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
     async fn finish_create_task(&mut self, title: String, list_id: String) -> Result<()> {
         match self
             .tasks_client
-            .create_task(&list_id, &title, self.selected_date)
+            .create_task(&list_id, &title, Some(self.selected_date))
             .await
         {
             Ok(task) => {
@@ -483,6 +766,362 @@ impl App {
                 self.mode = AppMode::Normal;
             }
             KeyCode::Char('n') | KeyCode::Esc => self.mode = AppMode::Normal,
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    pub async fn load_all_tasks(&mut self) -> Result<()> {
+        self.all_tasks.clear();
+        for list in &self.task_lists {
+            if let Ok(tasks) = self.tasks_client.list_all_tasks(&list.id).await {
+                self.all_tasks.extend(tasks);
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_task_list(&mut self, key: KeyEvent, selected: usize) -> Result<bool> {
+        let n = self.all_tasks.len();
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => {
+                let _ = self.load_tasks().await;
+                self.mode = AppMode::Normal;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if n > 0 {
+                    self.mode = AppMode::TaskList { selected: (selected + 1).min(n - 1) };
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.mode = AppMode::TaskList { selected: selected.saturating_sub(1) };
+            }
+            KeyCode::Char('n') => {
+                self.mode = AppMode::TaskListAdd { title: String::new() };
+            }
+            KeyCode::Char('t') => {
+                if n > 0 && selected < n {
+                    let task = self.all_tasks[selected].clone();
+                    match self.tasks_client.toggle_task(&task).await {
+                        Ok(updated) => {
+                            self.all_tasks[selected] = updated;
+                            self.status_message = Some("完了状態を切り替えました".to_string());
+                        }
+                        Err(e) => {
+                            self.status_message = Some(format!("エラー: {}", e));
+                        }
+                    }
+                    self.mode = AppMode::TaskList { selected };
+                }
+            }
+            KeyCode::Char('d') => {
+                if n > 0 && selected < n {
+                    self.mode = AppMode::TaskListDeleteConfirm { task_index: selected };
+                }
+            }
+            KeyCode::Char('e') => {
+                if n > 0 && selected < n {
+                    let title = self.all_tasks[selected].title.clone();
+                    self.mode = AppMode::TaskListEdit { task_index: selected, title };
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_task_list_add(&mut self, key: KeyEvent, mut title: String) -> Result<bool> {
+        match key.code {
+            KeyCode::Esc => self.mode = AppMode::TaskList { selected: 0 },
+            KeyCode::Enter => {
+                if !title.trim().is_empty() {
+                    if self.task_lists.is_empty() {
+                        self.mode = AppMode::AddTaskNewList { title, new_list: String::new() };
+                    } else {
+                        self.mode = AppMode::TaskListAddSelectList { title, selected_list: 0 };
+                    }
+                } else {
+                    self.mode = AppMode::TaskList { selected: 0 };
+                }
+            }
+            KeyCode::Char(c) => {
+                title.push(c);
+                self.mode = AppMode::TaskListAdd { title };
+            }
+            KeyCode::Backspace => {
+                title.pop();
+                self.mode = AppMode::TaskListAdd { title };
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_task_list_add_select_list(
+        &mut self,
+        key: KeyEvent,
+        title: String,
+        selected_list: usize,
+    ) -> Result<bool> {
+        let total = self.task_lists.len() + 1;
+        match key.code {
+            KeyCode::Esc => self.mode = AppMode::TaskListAdd { title },
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.mode = AppMode::TaskListAddSelectList {
+                    title,
+                    selected_list: (selected_list + 1).min(total - 1),
+                };
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.mode = AppMode::TaskListAddSelectList {
+                    title,
+                    selected_list: selected_list.saturating_sub(1),
+                };
+            }
+            KeyCode::Enter => {
+                if selected_list == self.task_lists.len() {
+                    self.mode = AppMode::AddTaskNewList { title, new_list: String::new() };
+                } else {
+                    let list_id = self.task_lists[selected_list].id.clone();
+                    self.mode = AppMode::TaskListAddDate {
+                        title,
+                        list_id,
+                        date_input: String::new(),
+                    };
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_task_list_add_date(
+        &mut self,
+        key: KeyEvent,
+        title: String,
+        list_id: String,
+        mut date_input: String,
+    ) -> Result<bool> {
+        match key.code {
+            KeyCode::Esc => {
+                let selected_list = self.task_lists.iter().position(|l| l.id == list_id).unwrap_or(0);
+                self.mode = AppMode::TaskListAddSelectList { title, selected_list };
+            }
+            KeyCode::Enter => {
+                let due = if date_input.trim().is_empty() {
+                    None
+                } else {
+                    NaiveDate::parse_from_str(date_input.trim(), "%Y-%m-%d").ok()
+                        .or_else(|| {
+                            let today = Local::now().date_naive();
+                            NaiveDate::parse_from_str(
+                                &format!("{}-{}", today.year(), date_input.trim()),
+                                "%Y-%m-%d",
+                            ).ok()
+                        })
+                };
+                match self.tasks_client.create_task(&list_id, &title, due).await {
+                    Ok(task) => {
+                        if let Some(d) = task.due {
+                            self.tasks.entry(d).or_default().push(task.clone());
+                        }
+                        self.all_tasks.push(task);
+                        self.status_message = Some("タスクを追加しました".to_string());
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("エラー: {}", e));
+                    }
+                }
+                let selected = self.all_tasks.len().saturating_sub(1);
+                self.mode = AppMode::TaskList { selected };
+            }
+            KeyCode::Char(c) => {
+                date_input.push(c);
+                self.mode = AppMode::TaskListAddDate { title, list_id, date_input };
+            }
+            KeyCode::Backspace => {
+                date_input.pop();
+                self.mode = AppMode::TaskListAddDate { title, list_id, date_input };
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_task_list_edit(
+        &mut self,
+        key: KeyEvent,
+        task_index: usize,
+        mut title: String,
+    ) -> Result<bool> {
+        match key.code {
+            KeyCode::Esc => self.mode = AppMode::TaskList { selected: task_index },
+            KeyCode::Enter => {
+                if !title.trim().is_empty() {
+                    let selected_list = self.all_tasks.get(task_index)
+                        .and_then(|t| self.task_lists.iter().position(|l| l.id == t.list_id))
+                        .unwrap_or(0);
+                    self.mode = AppMode::TaskListEditSelectList { task_index, title, selected_list };
+                } else {
+                    self.mode = AppMode::TaskList { selected: task_index };
+                }
+            }
+            KeyCode::Char(c) => {
+                title.push(c);
+                self.mode = AppMode::TaskListEdit { task_index, title };
+            }
+            KeyCode::Backspace => {
+                title.pop();
+                self.mode = AppMode::TaskListEdit { task_index, title };
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_task_list_edit_select_list(
+        &mut self,
+        key: KeyEvent,
+        task_index: usize,
+        title: String,
+        selected_list: usize,
+    ) -> Result<bool> {
+        let total = self.task_lists.len();
+        match key.code {
+            KeyCode::Esc => self.mode = AppMode::TaskListEdit { task_index, title },
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.mode = AppMode::TaskListEditSelectList {
+                    task_index,
+                    title,
+                    selected_list: (selected_list + 1).min(total.saturating_sub(1)),
+                };
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.mode = AppMode::TaskListEditSelectList {
+                    task_index,
+                    title,
+                    selected_list: selected_list.saturating_sub(1),
+                };
+            }
+            KeyCode::Enter => {
+                if let Some(task) = self.all_tasks.get(task_index).cloned() {
+                    let new_list_id = self.task_lists[selected_list].id.clone();
+                    let current_due = task.due;
+                    let due_str = current_due
+                        .map(|d| d.format("%Y-%m-%d").to_string())
+                        .unwrap_or_default();
+                    self.mode = AppMode::TaskListEditDate {
+                        task_index,
+                        title,
+                        list_id: new_list_id,
+                        date_input: due_str,
+                    };
+                } else {
+                    self.mode = AppMode::TaskList { selected: task_index };
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_task_list_edit_date(
+        &mut self,
+        key: KeyEvent,
+        task_index: usize,
+        title: String,
+        list_id: String,
+        mut date_input: String,
+    ) -> Result<bool> {
+        match key.code {
+            KeyCode::Esc => {
+                let selected_list = self.task_lists.iter().position(|l| l.id == list_id).unwrap_or(0);
+                self.mode = AppMode::TaskListEditSelectList { task_index, title, selected_list };
+            }
+            KeyCode::Enter => {
+                let new_due = if date_input.trim().is_empty() {
+                    None
+                } else {
+                    NaiveDate::parse_from_str(date_input.trim(), "%Y-%m-%d").ok()
+                        .or_else(|| {
+                            let today = Local::now().date_naive();
+                            NaiveDate::parse_from_str(
+                                &format!("{}-{}", today.year(), date_input.trim()),
+                                "%Y-%m-%d",
+                            ).ok()
+                        })
+                };
+                if let Some(task) = self.all_tasks.get(task_index).cloned() {
+                    let new_title = title.trim().to_string();
+                    if task.list_id == list_id {
+                        match self.tasks_client.update_task(&task.list_id, &task.id, &new_title, new_due).await {
+                            Ok(()) => {
+                                if let Some(t) = self.all_tasks.get_mut(task_index) {
+                                    t.title = new_title;
+                                    t.due = new_due;
+                                }
+                                self.status_message = Some("タスクを更新しました".to_string());
+                            }
+                            Err(e) => {
+                                self.status_message = Some(format!("エラー: {}", e));
+                            }
+                        }
+                    } else {
+                        let updated = Task {
+                            title: new_title.clone(),
+                            due: new_due,
+                            ..task.clone()
+                        };
+                        match self.tasks_client.move_task_to_list(&updated, &list_id, &new_title).await {
+                            Ok(new_task) => {
+                                self.all_tasks[task_index] = new_task;
+                                self.status_message = Some("タスクを更新しました".to_string());
+                            }
+                            Err(e) => {
+                                self.status_message = Some(format!("エラー: {}", e));
+                            }
+                        }
+                    }
+                }
+                self.mode = AppMode::TaskList { selected: task_index };
+            }
+            KeyCode::Char(c) => {
+                date_input.push(c);
+                self.mode = AppMode::TaskListEditDate { task_index, title, list_id, date_input };
+            }
+            KeyCode::Backspace => {
+                date_input.pop();
+                self.mode = AppMode::TaskListEditDate { task_index, title, list_id, date_input };
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    async fn handle_task_list_delete_confirm(
+        &mut self,
+        key: KeyEvent,
+        task_index: usize,
+    ) -> Result<bool> {
+        match key.code {
+            KeyCode::Char('y') => {
+                if let Some(task) = self.all_tasks.get(task_index).cloned() {
+                    match self.tasks_client.delete_task(&task.list_id, &task.id).await {
+                        Ok(()) => {
+                            self.all_tasks.remove(task_index);
+                            self.status_message = Some("タスクを削除しました".to_string());
+                        }
+                        Err(e) => {
+                            self.status_message = Some(format!("エラー: {}", e));
+                        }
+                    }
+                }
+                let selected = task_index.min(self.all_tasks.len().saturating_sub(1));
+                self.mode = AppMode::TaskList { selected };
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                self.mode = AppMode::TaskList { selected: task_index };
+            }
             _ => {}
         }
         Ok(false)

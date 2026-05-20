@@ -153,6 +153,20 @@ impl CalendarClient {
             .await?;
         Ok(())
     }
+
+    pub async fn update_event(&self, event_id: &str, title: &str) -> Result<()> {
+        let body = serde_json::json!({ "summary": title });
+        self.client
+            .patch(format!(
+                "https://www.googleapis.com/calendar/v3/calendars/primary/events/{}",
+                event_id
+            ))
+            .bearer_auth(&self.access_token)
+            .json(&body)
+            .send()
+            .await?;
+        Ok(())
+    }
 }
 
 fn parse_event(item: ApiEvent, is_holiday: bool) -> Option<Event> {

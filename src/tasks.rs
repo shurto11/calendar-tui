@@ -158,12 +158,56 @@ impl TasksClient {
         Ok(tasks)
     }
 
-    pub async fn create_task(&self, list_id: &str, title: &str, due: NaiveDate) -> Result<Task> {
-        let due_str = format!("{}T00:00:00.000Z", due.format("%Y-%m-%d"));
-        let body = serde_json::json!({
-            "title": title,
-            "due": due_str,
-        });
+    pub async fn list_all_tasks(&self, list_id: &str) -> Result<Vec<Task>> {
+        let mut tasks = Vec::new();
+        let mut page_token: Option<String> = None;
+
+        loop {
+            let mut req = self
+                .client
+                .get(format!(
+                    "https://tasks.googleapis.com/tasks/v1/lists/{}/tasks",
+                    list_id
+                ))
+                .bearer_auth(&self.access_token)
+                .query(&[
+                    ("showCompleted", "true".to_string()),
+                    ("showHidden", "true".to_string()),
+                    ("maxResults", "100".to_string()),
+                ]);
+
+            if let Some(token) = &page_token {
+                req = req.query(&[("pageToken", token)]);
+            }
+
+            let response = req.send().await?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                bail!("Tasks API エラー {}: {}", status, body);
+            }
+            let resp: TasksResponse = response.json().await?;
+
+            for item in resp.items.unwrap_or_default() {
+                if let Some(task) = parse_task(item, list_id) {
+                    tasks.push(task);
+                }
+            }
+
+            page_token = resp.next_page_token;
+            if page_token.is_none() {
+                break;
+            }
+        }
+
+        Ok(tasks)
+    }
+
+    pub async fn create_task(&self, list_id: &str, title: &str, due: Option<NaiveDate>) -> Result<Task> {
+        let mut body = serde_json::json!({ "title": title });
+        if let Some(d) = due {
+            body["due"] = serde_json::Value::String(format!("{}T00:00:00.000Z", d.format("%Y-%m-%d")));
+        }
 
         let response = self
             .client
@@ -188,7 +232,7 @@ impl TasksClient {
             id: resp["id"].as_str().unwrap_or("").to_string(),
             list_id: list_id.to_string(),
             title: title.to_string(),
-            due: Some(due),
+            due,
             completed: false,
         })
     }
@@ -211,6 +255,65 @@ impl TasksClient {
         }
 
         Ok(())
+    }
+
+    pub async fn update_task_title(&self, list_id: &str, task_id: &str, title: &str) -> Result<()> {
+        let body = serde_json::json!({ "title": title });
+        let response = self
+            .client
+            .patch(format!(
+                "https://tasks.googleapis.com/tasks/v1/lists/{}/tasks/{}",
+                list_id, task_id
+            ))
+            .bearer_auth(&self.access_token)
+            .json(&body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            bail!("Tasks API エラー {}: {}", status, body);
+        }
+        Ok(())
+    }
+
+    pub async fn update_task(&self, list_id: &str, task_id: &str, title: &str, due: Option<NaiveDate>) -> Result<()> {
+        let mut body = serde_json::json!({ "title": title });
+        match due {
+            Some(d) => {
+                body["due"] = serde_json::Value::String(format!("{}T00:00:00.000Z", d.format("%Y-%m-%d")));
+            }
+            None => {
+                body["due"] = serde_json::Value::Null;
+            }
+        }
+        let response = self
+            .client
+            .patch(format!(
+                "https://tasks.googleapis.com/tasks/v1/lists/{}/tasks/{}",
+                list_id, task_id
+            ))
+            .bearer_auth(&self.access_token)
+            .json(&body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            bail!("Tasks API エラー {}: {}", status, body);
+        }
+        Ok(())
+    }
+
+    pub async fn move_task_to_list(&self, task: &Task, new_list_id: &str, new_title: &str) -> Result<Task> {
+        let new_task = self.create_task(new_list_id, new_title, task.due).await?;
+        let _ = self.delete_task(&task.list_id, &task.id).await;
+        Ok(Task {
+            completed: task.completed,
+            ..new_task
+        })
     }
 
     pub async fn toggle_task(&self, task: &Task) -> Result<Task> {
