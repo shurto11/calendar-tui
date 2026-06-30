@@ -1,1 +1,0 @@
-/home/shurto11/ssd/tui/calendar-tui/target/debug/calendar-tui: /home/shurto11/ssd/tui/calendar-tui/src/app.rs /home/shurto11/ssd/tui/calendar-tui/src/auth.rs /home/shurto11/ssd/tui/calendar-tui/src/calendar.rs /home/shurto11/ssd/tui/calendar-tui/src/main.rs /home/shurto11/ssd/tui/calendar-tui/src/tasks.rs /home/shurto11/ssd/tui/calendar-tui/src/ui.rs

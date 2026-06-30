@@ -15,6 +15,7 @@ pub struct Task {
     pub title: String,
     pub due: Option<NaiveDate>,
     pub completed: bool,
+    pub notes: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -41,8 +42,10 @@ struct ApiTask {
     title: Option<String>,
     status: Option<String>,
     due: Option<String>,
+    notes: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct TasksClient {
     access_token: String,
     client: reqwest::Client,
@@ -203,10 +206,19 @@ impl TasksClient {
         Ok(tasks)
     }
 
-    pub async fn create_task(&self, list_id: &str, title: &str, due: Option<NaiveDate>) -> Result<Task> {
+    pub async fn create_task(
+        &self,
+        list_id: &str,
+        title: &str,
+        due: Option<NaiveDate>,
+        notes: Option<&str>,
+    ) -> Result<Task> {
         let mut body = serde_json::json!({ "title": title });
         if let Some(d) = due {
             body["due"] = serde_json::Value::String(format!("{}T00:00:00.000Z", d.format("%Y-%m-%d")));
+        }
+        if let Some(n) = notes {
+            body["notes"] = serde_json::Value::String(n.to_string());
         }
 
         let response = self
@@ -234,6 +246,7 @@ impl TasksClient {
             title: title.to_string(),
             due,
             completed: false,
+            notes: notes.map(|n| n.to_string()),
         })
     }
 
@@ -278,7 +291,14 @@ impl TasksClient {
         Ok(())
     }
 
-    pub async fn update_task(&self, list_id: &str, task_id: &str, title: &str, due: Option<NaiveDate>) -> Result<()> {
+    pub async fn update_task(
+        &self,
+        list_id: &str,
+        task_id: &str,
+        title: &str,
+        due: Option<NaiveDate>,
+        notes: Option<&str>,
+    ) -> Result<()> {
         let mut body = serde_json::json!({ "title": title });
         match due {
             Some(d) => {
@@ -287,6 +307,9 @@ impl TasksClient {
             None => {
                 body["due"] = serde_json::Value::Null;
             }
+        }
+        if let Some(n) = notes {
+            body["notes"] = serde_json::Value::String(n.to_string());
         }
         let response = self
             .client
@@ -308,7 +331,9 @@ impl TasksClient {
     }
 
     pub async fn move_task_to_list(&self, task: &Task, new_list_id: &str, new_title: &str) -> Result<Task> {
-        let new_task = self.create_task(new_list_id, new_title, task.due).await?;
+        let new_task = self
+            .create_task(new_list_id, new_title, task.due, task.notes.as_deref())
+            .await?;
         let _ = self.delete_task(&task.list_id, &task.id).await;
         Ok(Task {
             completed: task.completed,
@@ -349,6 +374,7 @@ impl TasksClient {
             title: task.title.clone(),
             due: task.due,
             completed: resp["status"].as_str() == Some("completed"),
+            notes: task.notes.clone(),
         })
     }
 }
@@ -369,5 +395,6 @@ fn parse_task(item: ApiTask, list_id: &str) -> Option<Task> {
         title,
         due,
         completed: item.status.as_deref() == Some("completed"),
+        notes: item.notes,
     })
 }
