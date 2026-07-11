@@ -61,7 +61,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         let _ = event::read()?;
     }
 
+    // uim-fep の IME トグル(Ctrl+Space)はステータス行の描画で画面を乱すことがあり、
+    // 差分描画のままだと前フレームの残骸が重なって表示される。
+    // モードファイルの変化を監視し、トグルを検知したら全画面を描き直す。
+    let getmode_path = std::env::var_os("UIM_FEP_GETMODE").map(std::path::PathBuf::from);
+    let mut last_ime_mode = getmode_path.as_deref().and_then(|p| std::fs::read(p).ok());
+
     'main: loop {
+        if let Some(path) = getmode_path.as_deref() {
+            let mode = std::fs::read(path).ok();
+            if mode != last_ime_mode {
+                last_ime_mode = mode;
+                terminal.clear()?;
+            }
+        }
+
         terminal.draw(|f| {
             app.viewport = f.area();
             ui::draw(f, &app)
