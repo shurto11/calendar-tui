@@ -92,6 +92,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
                         break;
                     }
+                    // Ctrl+L / 端末から素通りしてきた Ctrl+Space は全画面再描画。
+                    // IME トグル等で画面が乱れたときの復旧手段。
+                    if key.modifiers == KeyModifiers::CONTROL
+                        && matches!(key.code, KeyCode::Char('l') | KeyCode::Char(' '))
+                    {
+                        terminal.clear()?;
+                        continue;
+                    }
                     if app.handle_key(key).await? {
                         break;
                     }
