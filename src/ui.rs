@@ -3,7 +3,7 @@ use crate::matrix::{self, truncate_to_width};
 use crate::meta::{self, StackCategory};
 use crate::tasks::Task;
 use chrono::{Datelike, Local};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -13,6 +13,31 @@ use ratatui::{
 };
 
 const DAY_NAMES: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
+
+/// fbterm で崩れずに表示できる形へ変換する。fbterm は U+FFFF より上を � にし、幅も
+/// Unicode 5.0 の mk_wcwidth で数えるため、絵文字は ratatui/tmux と桁数が食い違ったり
+/// 全角グリフが左半分で切れたりする。F1 カレンダーのアイコンは漢字 1 文字に、それ以外の
+/// 幅が食い違う文字は 〓 に置き換え、異体字セレクタ・ZWJ は取り除く
+fn terminal_safe(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(c, '\u{FE0E}' | '\u{FE0F}' | '\u{200D}'))
+        .map(|c| match c {
+            '\u{1F3CE}' => '練', // 🏎 フリー走行
+            '\u{23F1}' => '予',  // ⏱ 予選・スプリント予選
+            '\u{1F3C1}' => '決', // 🏁 決勝・スプリント
+            c if c.width() == Some(2) && !fbterm_wide(c) => '〓',
+            c => c,
+        })
+        .collect()
+}
+
+/// fbterm (mk_wcwidth) が全角として扱う文字か。U+FFFF より上は � (半角) になる
+fn fbterm_wide(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x115F | 0x2329 | 0x232A | 0x2E80..=0x303E | 0x3040..=0xA4CF
+        | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFE10..=0xFE19 | 0xFE30..=0xFE6F
+        | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6)
+}
 
 pub fn draw(f: &mut Frame, app: &App) {
     if is_matrix_mode(&app.mode) {
@@ -101,7 +126,7 @@ fn render_calendar(f: &mut Frame, area: Rect, app: &App) {
                 } else {
                     Style::default().fg(Color::Green)
                 };
-                let truncated = truncate_to_width(&event.title, cell_inner.width as usize);
+                let truncated = truncate_to_width(&terminal_safe(&event.title), cell_inner.width as usize);
                 lines.push(Line::from(Span::styled(truncated, style)));
                 count += 1;
             }
@@ -317,11 +342,11 @@ fn render_normal_sidebar(f: &mut Frame, area: Rect, app: &App) {
             let mut spans = vec![Span::styled(time_str, Style::default().fg(Color::Cyan))];
             if let Some(ref cal_name) = e.calendar_name {
                 spans.push(Span::styled(
-                    format!("[{}] ", cal_name),
+                    format!("[{}] ", terminal_safe(cal_name)),
                     Style::default().fg(Color::Magenta),
                 ));
             }
-            spans.push(Span::styled(e.title.clone(), style));
+            spans.push(Span::styled(terminal_safe(&e.title), style));
             items.push(ListItem::new(Line::from(spans)));
         }
 
@@ -595,7 +620,7 @@ fn render_delete_confirm(f: &mut Frame, area: Rect, app: &App, idx: usize) {
                 Line::from("以下の予定を削除しますか？"),
                 Line::from(""),
                 Line::from(Span::styled(
-                    event.title.clone(),
+                    terminal_safe(&event.title),
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
@@ -678,7 +703,7 @@ fn build_item_list(app: &App, selected: usize, tasks_only: bool) -> Vec<ListItem
             };
             let prefix = if is_sel { "> " } else { "  " };
             items.push(ListItem::new(Line::from(Span::styled(
-                format!("{}{}", prefix, event.title),
+                format!("{}{}", prefix, terminal_safe(&event.title)),
                 style,
             ))));
             idx += 1;
@@ -804,7 +829,7 @@ fn render_edit_event(f: &mut Frame, area: Rect, app: &App, event_index: usize, t
         .split(inner);
 
     f.render_widget(
-        Paragraph::new(format!("変更前: {}", original))
+        Paragraph::new(format!("変更前: {}", terminal_safe(original)))
             .style(Style::default().fg(Color::DarkGray)),
         v[0],
     );
@@ -1016,7 +1041,7 @@ fn render_edit_event_time(
         .split(inner);
 
     f.render_widget(
-        Paragraph::new(format!("予定: {}", original)).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(format!("予定: {}", terminal_safe(original))).style(Style::default().fg(Color::DarkGray)),
         v[0],
     );
     f.render_widget(
@@ -1076,7 +1101,7 @@ fn render_edit_event_end_date(
         .split(inner);
 
     f.render_widget(
-        Paragraph::new(format!("予定: {}", original)).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(format!("予定: {}", terminal_safe(original))).style(Style::default().fg(Color::DarkGray)),
         v[0],
     );
     f.render_widget(
@@ -1131,7 +1156,7 @@ fn render_edit_task(f: &mut Frame, area: Rect, app: &App, task_index: usize, tit
         .split(inner);
 
     f.render_widget(
-        Paragraph::new(format!("変更前: {}", original))
+        Paragraph::new(format!("変更前: {}", terminal_safe(original)))
             .style(Style::default().fg(Color::DarkGray)),
         v[0],
     );
@@ -1689,5 +1714,23 @@ fn render_matrix_delete_confirm(f: &mut Frame, area: Rect, app: &App) {
             .wrap(Wrap { trim: false }),
             inner,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f1_icons_become_kanji() {
+        assert_eq!(terminal_safe("🏎\u{FE0F} FORMULA 1 - Practice 1"), "練 FORMULA 1 - Practice 1");
+        assert_eq!(terminal_safe("⏱\u{FE0F} FORMULA 1 - Qualifying"), "予 FORMULA 1 - Qualifying");
+        assert_eq!(terminal_safe("🏁 FORMULA 1 - Race"), "決 FORMULA 1 - Race");
+    }
+
+    #[test]
+    fn width_mismatched_chars_become_geta() {
+        assert_eq!(terminal_safe("🚗⏰👨\u{200D}👩"), "〓〓〓〓");
+        assert_eq!(terminal_safe("会議 ● 10:00"), "会議 ● 10:00");
     }
 }
