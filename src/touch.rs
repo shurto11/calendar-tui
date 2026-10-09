@@ -1,4 +1,4 @@
-//! touch-server クライアント。`~/ssd/tools/touch-server` デーモンへ Unix socket で
+//! touch-server クライアント。`~/ssd/fb/touch/touch-server` デーモンへ Unix socket で
 //! 接続し、フォーカス中ペイン内のタッチイベント(JSON Lines)を受け取って、
 //! ローカル化＋ジェスチャ判定した結果を mpsc でメインループへ渡す。
 //!
