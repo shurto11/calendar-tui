@@ -68,7 +68,7 @@ pub fn draw(f: &mut Frame, app: &App) {
 fn render_calendar(f: &mut Frame, area: Rect, app: &App) {
     let today = Local::now().date_naive();
     let title = format!(
-        " {}年{}月  [/]:月移動  hjkl:日移動  a:予定  q:終了 ",
+        " {}年{}月  hjkl:移動  [/]:月移動  t:今日  o:追加  q:終了 ",
         app.current_month.year(),
         app.current_month.month()
     );
@@ -331,9 +331,9 @@ fn render_normal_sidebar(f: &mut Frame, area: Rect, app: &App) {
 
     f.render_widget(
         Paragraph::new(vec![
-            Line::from(Span::styled("a:予定追加 d:削除 e:編集", Style::default().fg(Color::DarkGray))),
-            Line::from(Span::styled("[]:月移動  hjkl:日移動", Style::default().fg(Color::DarkGray))),
-            Line::from(Span::styled("q:終了", Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled("o:追加 c:編集 d:削除 q:終了", Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled("hjkl:日/週  []:月  t:今日", Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled("0/$:週頭/週末  gg/G:月初/月末", Style::default().fg(Color::DarkGray))),
         ]),
         v[2],
     );

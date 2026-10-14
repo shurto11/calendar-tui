@@ -31,6 +31,8 @@ pub struct App {
     pub calendars: Vec<CalendarInfo>,
     /// 直近の描画領域。main ループが毎フレーム更新する
     pub viewport: Rect,
+    /// `gg` の1打目を受けて2打目を待っている状態
+    pending_g: bool,
     calendar_client: CalendarClient,
 }
 
@@ -53,6 +55,7 @@ impl App {
             status_message: None,
             calendars,
             viewport: Rect::default(),
+            pending_g: false,
             calendar_client: client,
         };
 
@@ -198,15 +201,33 @@ impl App {
 
     async fn handle_normal(&mut self, key: KeyEvent) -> Result<bool> {
         self.status_message = None;
+        // vim と同様、`g` の後に `g` 以外が来たら両方とも捨てる
+        if std::mem::take(&mut self.pending_g) {
+            if key.code == KeyCode::Char('g') {
+                self.selected_date = self.current_month;
+            }
+            return Ok(false);
+        }
         match key.code {
             KeyCode::Char('q') => return Ok(true),
             KeyCode::Char('h') => self.move_in_grid(-1),
             KeyCode::Char('l') => self.move_in_grid(1),
             KeyCode::Char('k') => self.move_in_grid(-7),
             KeyCode::Char('j') => self.move_in_grid(7),
+            KeyCode::Char('0') => {
+                let back = self.selected_date.weekday().num_days_from_monday();
+                self.selected_date -= Duration::days(back as i64);
+            }
+            KeyCode::Char('$') => {
+                let fwd = 6 - self.selected_date.weekday().num_days_from_monday();
+                self.selected_date += Duration::days(fwd as i64);
+            }
+            KeyCode::Char('g') => self.pending_g = true,
+            KeyCode::Char('G') => self.selected_date = self.month_last_day(),
             KeyCode::Char('[') => self.change_month(-1).await?,
             KeyCode::Char(']') => self.change_month(1).await?,
-            KeyCode::Char('a') => {
+            KeyCode::Char('t') => self.go_to_today().await?,
+            KeyCode::Char('o') => {
                 self.mode = AppMode::AddEvent { title: String::new() }
             }
             KeyCode::Char('d') => {
@@ -216,7 +237,7 @@ impl App {
                     self.mode = AppMode::SelectItemDelete { selected: 0 };
                 }
             }
-            KeyCode::Char('e') => {
+            KeyCode::Char('c') => {
                 if self.selected_events().iter().all(|e| e.is_holiday) {
                     self.status_message = Some("この日に編集できる予定はありません".to_string());
                 } else {
@@ -664,6 +685,17 @@ impl App {
         self.current_month = NaiveDate::from_ymd_opt(ny, nm, 1).unwrap();
         self.selected_date = self.current_month;
         self.load_events().await?;
+        Ok(())
+    }
+
+    async fn go_to_today(&mut self) -> Result<()> {
+        let today = Local::now().date_naive();
+        let month = NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap();
+        if month != self.current_month {
+            self.current_month = month;
+            self.load_events().await?;
+        }
+        self.selected_date = today;
         Ok(())
     }
 }
