@@ -2,10 +2,6 @@ mod app;
 mod auth;
 mod calendar;
 mod config;
-mod matrix;
-mod meta;
-mod priority;
-mod tasks;
 mod touch;
 mod ui;
 

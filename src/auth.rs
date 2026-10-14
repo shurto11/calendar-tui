@@ -137,9 +137,6 @@ async fn authorize() -> Result<Token> {
         .add_scope(Scope::new(
             "https://www.googleapis.com/auth/calendar".to_string(),
         ))
-        .add_scope(Scope::new(
-            "https://www.googleapis.com/auth/tasks".to_string(),
-        ))
         .url();
 
     eprintln!("ブラウザで認証を行います...");
