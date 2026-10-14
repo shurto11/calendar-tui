@@ -16,7 +16,8 @@ pub enum AppMode {
     DeleteConfirm { event_index: usize },
     EditEvent { event_index: usize, title: String },
     EditEventTime { event_index: usize, title: String, time_input: String },
-    EditEventEndDate { event_index: usize, title: String, start_time: Option<String>, end_date_input: String },
+    EditEventEndTime { event_index: usize, title: String, start_time: String, end_time_input: String },
+    EditEventEndDate { event_index: usize, title: String, start_time: Option<String>, end_time: Option<String>, end_date_input: String },
     AddEventTime { title: String, time_input: String },
     AddEventEndTime { title: String, start_time: String, end_time_input: String },
     AddEventEndDate { title: String, start_time: Option<String>, end_time: Option<String>, end_date_input: String },
@@ -184,8 +185,11 @@ impl App {
             AppMode::EditEventTime { event_index, title, time_input } => {
                 self.handle_edit_event_time(key, event_index, title, time_input).await
             }
-            AppMode::EditEventEndDate { event_index, title, start_time, end_date_input } => {
-                self.handle_edit_event_end_date(key, event_index, title, start_time, end_date_input).await
+            AppMode::EditEventEndTime { event_index, title, start_time, end_time_input } => {
+                self.handle_edit_event_end_time(key, event_index, title, start_time, end_time_input).await
+            }
+            AppMode::EditEventEndDate { event_index, title, start_time, end_time, end_date_input } => {
+                self.handle_edit_event_end_date(key, event_index, title, start_time, end_time, end_date_input).await
             }
             AppMode::AddEventTime { title, time_input } => {
                 self.handle_add_event_time(key, title, time_input).await
@@ -515,24 +519,29 @@ impl App {
                 self.mode = AppMode::EditEvent { event_index, title };
             }
             KeyCode::Enter => {
-                let start_time = if time_input.trim().is_empty() {
-                    None
+                let trimmed = time_input.trim();
+                if trimmed.is_empty() {
+                    // 終日予定は終了時刻をスキップ
+                    self.mode = AppMode::EditEventEndDate {
+                        event_index,
+                        title,
+                        start_time: None,
+                        end_time: None,
+                        end_date_input: self.current_end_date_input(event_index),
+                    };
                 } else {
-                    Some(time_input.trim().to_string())
-                };
-                let current_end_date = self
-                    .events
-                    .get(&self.selected_date)
-                    .and_then(|evs| evs.get(event_index))
-                    .and_then(|e| e.end_date)
-                    .map(|d| d.format("%Y-%m-%d").to_string())
-                    .unwrap_or_default();
-                self.mode = AppMode::EditEventEndDate {
-                    event_index,
-                    title,
-                    start_time,
-                    end_date_input: current_end_date,
-                };
+                    let current_end_time = self
+                        .selected_events()
+                        .get(event_index)
+                        .and_then(|e| e.end_time.clone())
+                        .unwrap_or_default();
+                    self.mode = AppMode::EditEventEndTime {
+                        event_index,
+                        title,
+                        start_time: trimmed.to_string(),
+                        end_time_input: current_end_time,
+                    };
+                }
             }
             KeyCode::Char(c) => {
                 time_input.push(c);
@@ -547,21 +556,78 @@ impl App {
         Ok(false)
     }
 
+    async fn handle_edit_event_end_time(
+        &mut self,
+        key: KeyEvent,
+        event_index: usize,
+        title: String,
+        start_time: String,
+        mut end_time_input: String,
+    ) -> Result<bool> {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = AppMode::EditEventTime { event_index, title, time_input: start_time };
+            }
+            KeyCode::Enter => {
+                let end_time = if end_time_input.trim().is_empty() {
+                    None
+                } else {
+                    Some(end_time_input.trim().to_string())
+                };
+                self.mode = AppMode::EditEventEndDate {
+                    event_index,
+                    title,
+                    start_time: Some(start_time),
+                    end_time,
+                    end_date_input: self.current_end_date_input(event_index),
+                };
+            }
+            KeyCode::Char(c) => {
+                end_time_input.push(c);
+                self.mode = AppMode::EditEventEndTime { event_index, title, start_time, end_time_input };
+            }
+            KeyCode::Backspace => {
+                end_time_input.pop();
+                self.mode = AppMode::EditEventEndTime { event_index, title, start_time, end_time_input };
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    /// 編集中の予定の終了日を、終了日入力欄の初期値として返す
+    fn current_end_date_input(&self, event_index: usize) -> String {
+        self.selected_events()
+            .get(event_index)
+            .and_then(|e| e.end_date)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default()
+    }
+
     async fn handle_edit_event_end_date(
         &mut self,
         key: KeyEvent,
         event_index: usize,
         title: String,
         start_time: Option<String>,
+        end_time: Option<String>,
         mut end_date_input: String,
     ) -> Result<bool> {
         match key.code {
             KeyCode::Esc => {
-                self.mode = AppMode::EditEventTime {
-                    event_index,
-                    title,
-                    time_input: start_time.unwrap_or_default(),
-                };
+                match start_time {
+                    Some(start_time) => {
+                        self.mode = AppMode::EditEventEndTime {
+                            event_index,
+                            title,
+                            start_time,
+                            end_time_input: end_time.unwrap_or_default(),
+                        };
+                    }
+                    None => {
+                        self.mode = AppMode::EditEventTime { event_index, title, time_input: String::new() };
+                    }
+                }
             }
             KeyCode::Enter => {
                 let trimmed_title = title.trim().to_string();
@@ -577,6 +643,7 @@ impl App {
                             &trimmed_title,
                             event_date,
                             start_time.as_deref(),
+                            end_time.as_deref(),
                             end_date,
                         )
                         .await
@@ -594,11 +661,11 @@ impl App {
             }
             KeyCode::Char(c) => {
                 end_date_input.push(c);
-                self.mode = AppMode::EditEventEndDate { event_index, title, start_time, end_date_input };
+                self.mode = AppMode::EditEventEndDate { event_index, title, start_time, end_time, end_date_input };
             }
             KeyCode::Backspace => {
                 end_date_input.pop();
-                self.mode = AppMode::EditEventEndDate { event_index, title, start_time, end_date_input };
+                self.mode = AppMode::EditEventEndDate { event_index, title, start_time, end_time, end_date_input };
             }
             _ => {}
         }

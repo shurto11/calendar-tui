@@ -239,8 +239,11 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
         AppMode::EditEventTime { event_index, title, time_input } => {
             render_edit_event_time(f, area, app, *event_index, title, time_input)
         }
-        AppMode::EditEventEndDate { event_index, title, start_time, end_date_input } => {
-            render_edit_event_end_date(f, area, app, *event_index, title, start_time.as_deref(), end_date_input)
+        AppMode::EditEventEndTime { event_index, title, start_time, end_time_input } => {
+            render_edit_event_end_time(f, area, app, *event_index, title, start_time, end_time_input)
+        }
+        AppMode::EditEventEndDate { event_index, title, start_time, end_time, end_date_input } => {
+            render_edit_event_end_date(f, area, app, *event_index, title, start_time.as_deref(), end_time.as_deref(), end_date_input)
         }
         AppMode::AddEventTime { title, time_input } => {
             render_add_event_time(f, area, app, title, time_input)
@@ -652,13 +655,8 @@ fn render_add_event_end_date(
         Paragraph::new(format!("タイトル: {}", title)).style(Style::default().fg(Color::DarkGray)),
         v[0],
     );
-    let time_label = match (start_time, end_time) {
-        (Some(s), Some(e)) => format!("時刻: {}〜{}", s, e),
-        (Some(s), None) => format!("時刻: {}", s),
-        _ => "時刻: なし".to_string(),
-    };
     f.render_widget(
-        Paragraph::new(time_label).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(time_label(start_time, end_time)).style(Style::default().fg(Color::DarkGray)),
         v[1],
     );
     f.render_widget(Paragraph::new("終了日 (YYYY-MM-DD, 空白で同日):"), v[2]);
@@ -693,7 +691,7 @@ fn render_edit_event_time(
         .map(|e| e.title.as_str())
         .unwrap_or("");
     let block = Block::default()
-        .title(format!(" 予定を編集 — {}月{}日 (2/3) ", d.month(), d.day()))
+        .title(format!(" 予定を編集 — {}月{}日 (2/4) ", d.month(), d.day()))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
     let inner = block.inner(area);
@@ -736,14 +734,14 @@ fn render_edit_event_time(
     );
 }
 
-fn render_edit_event_end_date(
+fn render_edit_event_end_time(
     f: &mut Frame,
     area: Rect,
     app: &App,
     event_index: usize,
     title: &str,
-    start_time: Option<&str>,
-    end_date_input: &str,
+    start_time: &str,
+    end_time_input: &str,
 ) {
     let d = app.selected_date;
     let original = app
@@ -752,7 +750,7 @@ fn render_edit_event_end_date(
         .map(|e| e.title.as_str())
         .unwrap_or("");
     let block = Block::default()
-        .title(format!(" 予定を編集 — {}月{}日 (3/3) ", d.month(), d.day()))
+        .title(format!(" 予定を編集 — {}月{}日 (3/4) ", d.month(), d.day()))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
     let inner = block.inner(area);
@@ -779,9 +777,73 @@ fn render_edit_event_end_date(
         Paragraph::new(format!("新タイトル: {}", title)).style(Style::default().fg(Color::White)),
         v[1],
     );
-    let time_label = start_time.map(|t| format!("時刻: {}", t)).unwrap_or_else(|| "時刻: なし".to_string());
     f.render_widget(
-        Paragraph::new(time_label).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(format!("開始時刻: {}", start_time)).style(Style::default().fg(Color::DarkGray)),
+        v[2],
+    );
+    f.render_widget(Paragraph::new("終了時刻 (HH:MM, 空白で1時間後):"), v[3]);
+
+    let input_block = Block::default().borders(Borders::ALL);
+    let input_inner = input_block.inner(v[4]);
+    f.render_widget(input_block, v[4]);
+    f.render_widget(
+        Paragraph::new(end_time_input).style(Style::default().fg(Color::White)),
+        input_inner,
+    );
+    f.set_cursor_position((input_inner.x + end_time_input.width() as u16, input_inner.y));
+
+    f.render_widget(
+        Paragraph::new("Enter:次へ  Esc:戻る").style(Style::default().fg(Color::DarkGray)),
+        v[5],
+    );
+}
+
+fn render_edit_event_end_date(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    event_index: usize,
+    title: &str,
+    start_time: Option<&str>,
+    end_time: Option<&str>,
+    end_date_input: &str,
+) {
+    let d = app.selected_date;
+    let original = app
+        .selected_events()
+        .get(event_index)
+        .map(|e| e.title.as_str())
+        .unwrap_or("");
+    let block = Block::default()
+        .title(format!(" 予定を編集 — {}月{}日 (4/4) ", d.month(), d.day()))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let v = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+    f.render_widget(
+        Paragraph::new(format!("予定: {}", terminal_safe(original))).style(Style::default().fg(Color::DarkGray)),
+        v[0],
+    );
+    f.render_widget(
+        Paragraph::new(format!("新タイトル: {}", title)).style(Style::default().fg(Color::White)),
+        v[1],
+    );
+    f.render_widget(
+        Paragraph::new(time_label(start_time, end_time)).style(Style::default().fg(Color::DarkGray)),
         v[2],
     );
     f.render_widget(Paragraph::new("終了日 (YYYY-MM-DD, 空白で同日):"), v[3]);
@@ -799,6 +861,15 @@ fn render_edit_event_end_date(
         Paragraph::new("Enter:確定  Esc:戻る").style(Style::default().fg(Color::DarkGray)),
         v[5],
     );
+}
+
+/// 終了日入力画面に出す、入力済みの時刻の要約
+fn time_label(start_time: Option<&str>, end_time: Option<&str>) -> String {
+    match (start_time, end_time) {
+        (Some(s), Some(e)) => format!("時刻: {}〜{}", s, e),
+        (Some(s), None) => format!("時刻: {}", s),
+        _ => "時刻: なし".to_string(),
+    }
 }
 
 #[cfg(test)]

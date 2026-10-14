@@ -221,9 +221,10 @@ impl CalendarClient {
         title: &str,
         date: NaiveDate,
         start_time: Option<&str>,
+        end_time: Option<&str>,
         end_date: Option<NaiveDate>,
     ) -> Result<()> {
-        let body = build_event_body(title, date, start_time, None, end_date)?;
+        let body = build_event_body(title, date, start_time, end_time, end_date)?;
         self.client
             .put(format!(
                 "https://www.googleapis.com/calendar/v3/calendars/primary/events/{}",
@@ -355,4 +356,26 @@ fn parse_event(item: ApiEvent, is_holiday: bool, calendar_name: Option<String>) 
         is_holiday,
         calendar_name,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn end_time_is_kept() {
+        let body = build_event_body("会議", d(2026, 10, 14), Some("10:00"), Some("12:30"), None).unwrap();
+        assert!(body["end"]["dateTime"].as_str().unwrap().starts_with("2026-10-14T12:30:00"));
+    }
+
+    #[test]
+    fn end_time_on_end_date() {
+        let body =
+            build_event_body("夜勤", d(2026, 10, 14), Some("23:00"), Some("00:00"), Some(d(2026, 10, 15))).unwrap();
+        assert!(body["end"]["dateTime"].as_str().unwrap().starts_with("2026-10-15T00:00:00"));
+    }
 }
